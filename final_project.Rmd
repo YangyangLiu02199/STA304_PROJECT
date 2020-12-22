@@ -1,0 +1,181 @@
+---
+title: "Logistic Regression and Propensity Score Analysis on Paycheck Protection Program"
+author: "Yangyang Liu (1003986984)"
+date: "21/12/2020"
+output: pdf_document
+fontsize: 12pt
+abstract: "The project focuses on the payback protection program in US and studies how the demographic features of applicants would affect the result of getting big loan, which is valued more than 5 million, or small loan, which is valued from $150,000 to 5 million. In order to study this, logistic regression is used to examine correlations between loan type and various factors, such as the state the applicant belongs, the gender and the race of the applicant. Also, propensity score is used to analyze if the non-profit company would lead a better chance for a big loan. After the detailed analysis, it depicts that certain characteristic of applicants like from state Puerto Rico or Guam have a higher probability for a higher loan. Meanwhile, being a nonprofit organization would get a higher loan. The comprehensive discussion is shown below."
+keywords: "Propensity Score, Casual Inference, Logistic Regression, Correlation, Loan Type, Nonprofit Organization"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(broom)
+library(knitr)
+library(kableExtra)
+
+df_raw <- read.csv("PPP_data.csv",header = TRUE,fileEncoding="UTF-8-BOM")
+df_raw = subset(df_raw, select = -c(Address,City,Zip,NAICSCode,DateApproved,CD,BusinessName,BusinessType) )
+df <- read.csv("PPP_data_filtered.csv",header = TRUE,fileEncoding="UTF-8-BOM")
+```
+
+\section{1. Introduction}
+
+In the year 2020, the most concerned global issue is the COVID-19 pandemic and the U.S is undoubtedly one of the most affected countries. There are many small businesses affected by the pandemic, such as restaurants, gyms and clubs, who lose a lot of customers under the social-distancing and other protective measures. As a result, the U.S Small Business Administration (SBA) released a coronavirus relief program to help the business through the difficult times. The Paycheck Protection Program (PPP) is a loan designed to provide a direct incentive for small businesses to keep their workers on the payroll. ^[1]^ Statistical analysis can be done on the demographic information of the applicants  and it is important to observe the relationships between the fund value and the characteristics of the applicant.
+
+Propensity score is a widely used tool in experimental settings to estimate the effect of a treatment. It also demonstrates good performance using observational data. The main advantage of the propensity score is that it reduces selection bias by equating groups based on these covariates.^[2]^ Therefore, people can make causal inferences through propensity score matching. On the other hand, the regression model cannot establish causality. However, it is sufficient to use regression model to discover correlation between the variables. In the context of this project, regression model can be used to examine the correlation between the demographic information of the applicants and the fund value they receive from the bank. To a more practical extent, the propensity score can be used to discern if there is a causal link between whether the business is nonprofit organization (NPO) or not and whether or not the person gets a large amount of fund.
+
+The Methodology section contains the description of the data and data cleaning process, as well as the model for logistic regression and propensity score analysis. Results of the logistic regression model and propensity score analysis is provided in the Results Section, and inferences of the data along with the conclusions are presented in the Conclusion Section. 
+
+\section{2. Methodology}
+
+\subsection{2.1 Data}
+
+The data is collected from the SBA website and the raw data contains information about all passed loan applications. Since the demographic data was voluntarily submitted and not all borrowers provided the information, a filter is applied so that 66783 applications with complete demographic information are obtained for analysis. In the raw data, the outcome of the application is loan type. The letters a to e represent loans of value $5-10 million, \$2-5 million, \$1-2 million, \$350,000-1 million, \$150,000-\$350,000. To simplify the labels, we introduced a new metric for the loan value as a binary variable. Any loan of value more than 5 million is considered a large loan whereas loans below 5 million are considered to be small. The key features used for analysis are state, race, gender, whether the applicant is a veteran, whether the company is nonprofit and the number of jobs the company retains. 
+
+```{r,echo=FALSE,results='asis'}
+kable(df_raw[1:5,],format='latex',caption="Raw Data")  %>% 
+  kable_styling(latex_options="scale_down")
+```
+
+\subsection{2.2 Model}
+
+The model selected is logistic regression for several reasons. First off, the dependent variable loan type is binary. The observations, in our case all the applications, are independent of each other because they are from different people and companies. The scatter plot shows that the continuous variable $JobsRetained$ is linearly associated with the $LoanType$ outcome in logit scale. In addition, we examined the collinearity between the predictor variables and all the VIF values are smaller than 5, which indicates that there is no significant collinearity between $State$, $Gender$, $Race$, $Veteran$ and $JobsRetained$. Therefore, it is appropriate to use the logistic regression model for the data.
+
+```{r,echo=FALSE}
+# modify variables as factors
+df$LoanType <- as.factor(df$LoanType)
+df$State <- as.factor(df$State)
+df$Gender <- as.factor(df$Gender)
+df$Race <- as.factor(df$Race)
+df$Veteran <- as.factor(df$Veteran)
+df$NonProfit <- as.factor(df$NonProfit)
+df$LoanType <- relevel(df$LoanType, "small")
+
+# logistic regression model 
+log_reg_model <- glm(LoanType ~ State + Gender + Race + Veteran + NonProfit + JobsRetained,data=df,family='binomial')
+```
+
+```{r,eval = TRUE, echo=FALSE, warning=FALSE, message=FALSE,out.width="50%", fig.align='center'}
+# check linearity between cont. var and logit
+probabilities <- predict(log_reg_model, type = "response")
+predicted.classes <- ifelse(probabilities > 0.5, "large", "small")
+
+mydata <- df %>%
+  dplyr::select_if(is.numeric) 
+predictors <- colnames(mydata)
+# Bind the logit and tidying the data for plot
+mydata <- mydata %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+
+ggplot(mydata, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) + labs(title = "Relationship between Jobs Retained and Logit",tag="Figure 1")
+
+kable(car::vif(log_reg_model))
+```
+
+In the standard logistic regression, we can model the $LoanType$ as a linear combination of $State$, $Gender$, $Race$, $Veteran$, $NonProfit$, $JobsRetained$ while all variables other than $JobsRetained$ are categorical variables and $JobsRetained$ is a continuous variable. The model is of the form:
+
+$Loan Type = \beta_0 + \beta_1 State + \beta_2Gender + \beta_3Race + \beta_4Veteran + \beta_5NonProfit + \beta_6JobsRetained +\epsilon$
+
+In propensity score analysis, first we need to explain the treatment in terms of other variables. The structure is the same as above but $y$ is the treatment we are interested in as the cause of the outcome. For example, when the treatment is whether a company type is NGO or not, the model to characterize is:
+
+$NonProfit = \beta_0 + \beta_1State + \beta_2Gender + \beta_3Race + \beta_4Veteran + \beta_5JobsRetained + \epsilon$
+
+Then to investigate whether it has a causal link with the fund value, we fit another logistic regression.  
+
+$Loan Type = \beta_0 + \beta_1 State + \beta_2Gender + \beta_3Race + \beta_4Veteran + \beta_5NonProfit + \beta_6JobsRetained +\epsilon$
+
+\section{3. Results}
+
+\subsection{3.1 Exploratory Data Analysis}
+
+To observe any patterns, we first conduct exploratory analysis by plotting the ratio of small to big loans against different variables. Looking at the 100% stacked bar chart of the loans by profitable and non-profitable companies, we see that non-profitable companies have a larger ratio of getting smaller loans. Comparing the loans between veteran and non-veteran, we do not observe a significant difference in the ratio of funds distribution. On the other hand, the plot of loan type and jobs retained show that the ratio of large to small fund decrease as the number of jobs in the company increase. To verify if those variables truly correlate to or cause the difference in loan types, further analysis needs to be done by modeling.
+
+```{r,eval = TRUE, echo=FALSE, warning=FALSE, message=FALSE,out.width="50%"}
+ggplot(df,aes(NonProfit, fill = LoanType)) + geom_bar(position="fill") + labs(title = "Loan Type Ratio based on NonProfitable",tag="Figure 2") 
+
+ggplot(df,aes(Veteran, fill = LoanType)) + geom_bar(position="fill") + labs(title = "Loan Type Ratio based on Veteran Status",tag="Figure 3")
+
+ggplot(df,aes(JobsRetained,fill = LoanType)) + geom_bar(position="fill") + labs(title = "Loan Type Ratio based on JobsRetained",tag="Figure 4")
+```
+
+\subsection{3.2 Logistic Regression}
+
+To examine if there is correlation between the characteristics of the applicant and the size of the loan they receive, a logistic regression model is used. The model we obtained is $Loan Type = 2.21 + 0.61 StateAL + ... - 0.36 MaleOwned + 0.71 Asian + ... -0.11 Veteran - 0.046 JobsRetained$. After filtering out the variables by the condition on p-value smaller than 0.05, we obtain the variables which are statistically significant to the model shown in Table 2. The state PR (Puerto Rico) has the largest log-odds of 2.1 of getting a large fund, which indicates the probability he/she would get a larger fund is 89.1%. In addition, male-owned businesses have a log-odds of -0.36, meaning the probability of them getting a larger fund is 41.1%. Similarly, the probability of a veteran getting a large fund is 47.3%. 
+
+```{r,eval = TRUE, echo=FALSE, warning=FALSE,message=FALSE}
+ss <- coef(summary(log_reg_model))
+ss_sig <- ss[ss[,"Pr(>|z|)"]<0.05,]
+kable(ss_sig,format='latex',caption = "Logistic Regression Significant Variables (p<0.05)")%>%
+  kable_styling(latex_options = "hold_position")
+```
+
+\subsection{3.3 Propensity Score Matching}
+
+To examine if the company is non-profitable causes the company to get a larger fund, propensity score matching is used to find two sets of data suitable for comparison. From the propensity regression model results in Table 3, whether a company is non-profitable or not is statistically significant. The log-odds of getting a larger fund with nonprofit company is 1.86 and the probability is 86.5%. 
+
+
+```{r,eval = TRUE, echo=FALSE, warning=FALSE,message=FALSE}
+# calculate propensity score
+propensity_score <- glm(NonProfit ~ State + Gender + Race + Veteran + JobsRetained, family = 'binomial', data = df)
+
+ppp_data <- augment(propensity_score, data = df,type.predict = "response") %>% dplyr::select(-.resid, -.std.resid, -.hat, -.sigma, -.cooksd)
+
+# create matches
+ppp_data <- ppp_data %>% arrange(.fitted, NonProfit)
+
+ppp_data$treated <- if_else(ppp_data$NonProfit == "N", 0, 1)
+
+ppp_data$treated <- as.integer(ppp_data$treated)
+
+matches <- arm::matching(z = ppp_data$treated, score = ppp_data$.fitted)
+
+ppp_data <- cbind(ppp_data, matches)
+
+# reduce dataset to matched
+ppp_data_matched <- ppp_data %>% filter(match.ind != 0) %>% dplyr::select(-match.ind, -pairs, -treated)
+
+propensity_score_regression <- glm(LoanType ~ NonProfit + State + Gender + Race + Veteran + JobsRetained, data = ppp_data_matched,family='binomial')
+
+pps <- coef(summary(propensity_score_regression))
+pps_sig <- pps[pps[,"Pr(>|z|)"]<0.05,]
+kable(pps_sig,format='latex',caption = "Propensity Score Regression Significant Variables (p<0.05)")%>%
+  kable_styling(latex_options = "hold_position")
+```
+
+\section{4. Discussion}
+
+\subsection{4.1 Summary and Conclusion}
+
+From the logistic regression results, we observed that certain states and races, as well as gender, being a veteran and number of jobs retained in the company can affect if the bank distributes a large or a small loan to the applicant. If the applicant is from Puerto Rico or Guam and being Asian, Black or Hispanic and not a veteran have a larger possibility of getting a larger loan. However, it does not imply that for example, being an Asian, would cause the applicant to have a larger fund. We can conclude from propensity score matching that non-profitable companies can get larger loans. This result is different from the visual interpretation we got from the exploratory data analysis because other factors may also play a role in the difference in loan types. However, by equating the covariates, we can infer the causal link between nonprofit companies and larger loans.
+
+The results can indeed imply some phenomena during the COVID-19. Puerto Rico is a Caribbean Island and it is known for its hotel strip, beach bars and casinos. The pandemic most certainly does great harm to tourism and states like Puerto Rico in particular. As a result, we see the fund going towards applicants in that state are more likely to be larger due to greater loss in the profits. The regression model also shows for every unit increase in the number of jobs in the company, the probability of getting a large fund decreases by 1.15%. This shows the fund is prioritized for business in smaller scale because they are more likely to be more negatively impacted by the pandemic.
+
+To investigate the reason for nonprofit organizations getting large funds, we looked into all the businesses in detail. It is important to note that a vast majority of those nonprofit organizations are churches. From the article by Mary Claire Patton, 12000 Catholic churches applied for the PPP loan and 9000 was approved. ^[3]^ Thus, the reason behind the large fund might be that the churches are undergoing a significant decline in giving due to the prohibition of congregation. ^[4]^ At the meantime, they still need to pay for various expenses such as for building maintenance and administrations. Not to mention that the U.S is founded on Christianity and it might also lead to more loan given to the churches. However, it is still controversial topic if it is necessary for the churches to receive the loan from Payment Protection Program since they do not pay taxes and thus should not be taking business benefits. 
+
+\subsection{4.2 Weakness and Next Steps}
+
+Although propensity score matching is a useful technique for causal inference, it does have some drawbacks. Due to the one-to-one greedy matching method, the size of the dataset is significantly reduced from 66773 to 2386 entries, which leaves a lot of data unused. This method may also increase confounder imbalance, thereby leading to estimates of exposure effects with greater bias.^[5]^ In the future, we could use other matching methods based on distance metrics such as the Malhanobis or Euclidean distance. Malhanobis distance is a better tool for studying variables that are more than two and are correlated ^[6]^. In this case, it can cause the logistic regression to be less functional and Malhanobis distance method would be a better choice. Euclidean distance could also be a good choice here. Apart from the methods, we can also conduct some surveys that mainly focus on the nonprofit organizations. We could find out which business area they are targeting, what amount of fund they have. This would test if the result of the model is correct. Meanwhile, this would provide some reasons why government tends to offer more funds for them. Because of this, the analysis could be more useful for people who wants to open business in the future. We could also do some research that focus on the similar programs in Canada to figure out if the casual inference between nonprofit organization and big loan also works in Canada. If so, this is more likely a global trend. 
+
+\newpage
+
+
+\section{Reference}
+
+[1] Paycheck Protection Program. (2020, December 21). Retrieved from https://www.sba.gov/funding-programs/loans/coronavirus-relief-options/paycheck-protection-program
+
+[2] Wikipedia contributors. (2020, December 21). Propensity score matching. Wikipedia. https://en.wikipedia.org/wiki/Propensity_score_matching
+
+[3] Patton, Mary Claire. “Nearly 50 Texas Churches Received $1 Million or More in PPP Loans.” KSAT, KSAT San Antonio, 18 Dec. 2020, www.ksat.com/news/local/2020/12/18/at-least-50-texas-churches-received-1-million-or-more-in-ppp-loans/. 
+
+[4] Garfield, by: Ken. “Will the Church Financially Survive the COVID-19 Pandemic?” Will the Church Financially Survive the COVID-19 Pandemic? | Faith and Leadership, 28 Apr. 2020, faithandleadership.com/will-church-financially-survive-covid-19-pandemic. 
+
+[5] Gary King and Richard Nielsen. 2019. “Why Propensity Scores Should Not Be Used for Matching.” Political Analysis, 27, 4. Copy at https://j.mp/2ovYGsW
+
+[6] Stephanie. (2020, September 22). Mahalanobis Distance: Simple Definition, Examples. Retrieved December 22, 2020, from https://www.statisticshowto.com/mahalanobis-distance/
+
+
